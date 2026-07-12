@@ -1,7 +1,6 @@
 # pgkit
 
 [![Go Reference](https://pkg.go.dev/badge/github.com/retailancer/pgkit.svg)](https://pkg.go.dev/github.com/retailancer/pgkit)
-[![Go Report Card](https://goreportcard.com/badge/github.com/retailancer/pgkit)](https://goreportcard.com/report/github.com/retailancer/pgkit)
 
 > Originally developed as [Retailancer](https://retailancer.com)'s internal PostgreSQL data access layer, `pgkit` has since been open-sourced for the broader Go community.
 
