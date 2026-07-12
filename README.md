@@ -2,8 +2,6 @@
 
 [![Go Reference](https://pkg.go.dev/badge/github.com/retailancer/pgkit.svg)](https://pkg.go.dev/github.com/retailancer/pgkit)
 
-> Originally developed as [Retailancer](https://retailancer.com)'s internal PostgreSQL data access layer, `pgkit` has since been open-sourced for the broader Go community.
-
 `pgkit` is a PostgreSQL toolkit for Go, built natively on top of [`pgx/v5`](https://github.com/jackc/pgx). It provides a type-safe, ergonomic query builder, automatic JSON/JSONB scanning, savepoint-based nested transactions, and a resilient self-healing `LISTEN/NOTIFY` client, without an ORM or code generation.
 
 ---
