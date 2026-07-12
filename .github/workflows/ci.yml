@@ -24,7 +24,6 @@ jobs:
         uses: golangci/golangci-lint-action@v6
         with:
           version: latest
-          working-directory: pgkit
 
   test:
     name: Test
@@ -57,5 +56,4 @@ jobs:
         env:
           PG_DSN: postgres://postgres:postgres@localhost:5432/postgres?sslmode=disable
         run: |
-          cd pgkit
           go test -v -race ./...
