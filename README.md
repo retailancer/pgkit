@@ -753,7 +753,26 @@ type Notification struct {
 
 ## Raw SQL Escape Hatch
 
-For queries that fall outside the builder's scope, execute raw SQL directly on the pool:
+For queries that fall outside the builder's scope, you can execute raw SQL.
+
+### Execute Raw SQL on Client/Transaction
+
+To execute raw SQL queries that participate in client transactions and nested savepoints, use `client.Query`. It returns a raw `pgx.Rows` result:
+
+```go
+rows, err := client.Query(ctx, "SELECT id, name FROM users WHERE age > $1", 18)
+if err != nil {
+    return err
+}
+defer rows.Close()
+for rows.Next() {
+    // scan rows using pgx.Rows standard scanning
+}
+```
+
+### Execute Raw DDL/SQL directly on the Pool
+
+To run schema migrations or DDL statements directly on the database pool (bypassing any transaction state):
 
 ```go
 tag, err := db.Exec(ctx, `
@@ -765,7 +784,7 @@ tag, err := db.Exec(ctx, `
 `)
 ```
 
-This runs directly against the `pgxpool.Pool` and bypasses the query builder entirely. It does not participate in an active `Client` transaction — use `tx.pgxTx` via the `Exec` method on `Tx` for that.
+This runs directly against the `pgxpool.Pool` and bypasses the query builder entirely.
 
 ---
 

@@ -3,6 +3,7 @@ package pgkit
 import (
 	"context"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/retailancer/pgkit/query"
 )
 
@@ -169,4 +170,11 @@ func (c *Client) Exec(ctx context.Context, q query.Query) (*query.Result, error)
 		return c.activeTx.Exec(ctx, q)
 	}
 	return c.db.exec(ctx, c.db.pool, q)
+}
+
+func (c *Client) Query(ctx context.Context, sql string, args ...any) (pgx.Rows, error) {
+	if c.activeTx != nil {
+		return c.activeTx.pgxTx.Query(ctx, sql, args...)
+	}
+	return c.db.pool.Query(ctx, sql, args...)
 }
