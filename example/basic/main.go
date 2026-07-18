@@ -16,6 +16,7 @@ type User struct {
 	ID        string    `json:"id"`
 	Email     string    `json:"email"`
 	Name      string    `json:"name"`
+	Status    string    `json:"status"`
 	CreatedAt time.Time `json:"created_at"`
 }
 
@@ -25,7 +26,7 @@ func main() {
 
 	dsn := os.Getenv("PG_DSN")
 	if dsn == "" {
-		dsn = "postgres://postgres:postgres@localhost:5432/postgres?sslmode=disable"
+		dsn = "postgres://postgres:postgres@localhost:54360/postgres?sslmode=disable"
 	}
 
 	fmt.Println("Connecting to PostgreSQL...")
@@ -50,6 +51,7 @@ func main() {
 			id TEXT PRIMARY KEY,
 			email TEXT UNIQUE NOT NULL,
 			name TEXT NOT NULL,
+			status TEXT NOT NULL DEFAULT 'active',
 			created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
 			deleted_at TIMESTAMPTZ
 		);
@@ -121,6 +123,50 @@ func main() {
 		log.Fatalf("Verification query failed: %v", err)
 	}
 	fmt.Printf("Fetched User after Upsert: %+v\n", updatedUser)
+
+	// conditional upsert
+	fmt.Println("\n--- Conditional Upsert (Skipping update since user is banned) ---")
+	err = client.Update(ctx, &query.Update{
+		Table: "users",
+		Data: map[string]any{
+			"status": "banned",
+		},
+		Where: &query.Filter{
+			Eq: map[string]any{"email": "alice@example.com"},
+		},
+	})
+	if err != nil {
+		log.Fatalf("Failed to update status to banned: %v", err)
+	}
+
+	skippedID, err := client.Upsert(ctx, &query.Upsert{
+		Into:       "users",
+		ConflictOn: []string{"email"},
+		Data: map[string]any{
+			"email":  "alice@example.com",
+			"name":   "Alice Banned",
+			"status": "active",
+		},
+		Where: &query.Filter{
+			Neq: map[string]any{"status": "banned"},
+		},
+	})
+	if err != nil {
+		log.Fatalf("Conditional Upsert failed: %v", err)
+	}
+	fmt.Printf("Conditional Upsert returned ID: %q (expected empty because user is banned)\n", skippedID)
+
+	var checkedUser User
+	err = client.One(ctx, &query.Get{
+		From: "users",
+		Where: &query.Filter{
+			Eq: map[string]any{"email": "alice@example.com"},
+		},
+	}, &checkedUser)
+	if err != nil {
+		log.Fatalf("Verification query failed: %v", err)
+	}
+	fmt.Printf("Fetched User after skipped Conditional Upsert: %+v\n", checkedUser)
 
 	// stateful transaction
 	fmt.Println("\n--- Running Stateful Transaction ---")

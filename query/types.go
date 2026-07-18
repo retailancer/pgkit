@@ -81,6 +81,7 @@ type Upsert struct {
 	Into         string
 	ConflictOn   []string
 	Data         map[string]any
+	Where        *Filter
 	Types        map[string]string
 	SetUpdatedAt *bool
 }
@@ -107,3 +108,11 @@ func (*InsertMany) isQuery() {}
 func (*Upsert) isQuery()     {}
 func (*Update) isQuery()     {}
 func (*Delete) isQuery()     {}
+
+// Expr represents a raw SQL expression that is executed server-side.
+// It is rendered directly into the generated SQL query without parameter binding.
+//
+// WARNING: To prevent SQL injection vulnerabilities, Expr must only be used with static,
+// trusted string expressions (e.g. "attempts + 1", "NOW()"). Never build Expr dynamically
+// using untrusted user inputs.
+type Expr string

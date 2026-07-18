@@ -286,6 +286,24 @@ id, err := client.Upsert(ctx, &query.Upsert{
 })
 ```
 
+**Upsert with `Where` filter (conditional update on conflict):**
+
+You can supply a `Where` filter to perform a conditional update when a conflict occurs:
+
+```go
+_, err := client.Upsert(ctx, &query.Upsert{
+    Into:       "users",
+    ConflictOn: []string{"email"},
+    Data: map[string]any{
+        "email":  "alice@example.com",
+        "status": "active",
+    },
+    Where: &query.Filter{
+        Neq: map[string]any{"status": "banned"},
+    },
+})
+```
+
 **Composite unique constraint:**
 
 ```go
@@ -329,6 +347,27 @@ err := client.Delete(ctx, &query.Delete{
 ```
 
 By default, all `Get` and `Aggregate` queries automatically exclude soft-deleted rows (`WHERE deleted_at IS NULL`). See [Include deleted rows](#include-deleted-rows) to override.
+
+### Server-Side Expressions (query.Expr)
+
+For fields that need to be evaluated on the PostgreSQL server (such as column increments or server-side functions), use `query.Expr` to bypass standard parameter binding and write raw expressions.
+
+```go
+err := client.Update(ctx, &query.Update{
+    Table: "retries",
+    Data: map[string]any{
+        "attempts":   query.Expr("attempts + 1"),
+        "updated_at": query.Expr("NOW()"),
+    },
+    Where: &query.Filter{Eq: map[string]any{"id": jobID}},
+})
+```
+
+> [!WARNING]
+> **SQL Injection Risk**: `query.Expr` outputs the provided string directly into the SQL query without any parameter binding or sanitization.
+>
+> - **Only use `query.Expr` with static, trusted string expressions.**
+> - **Never** construct `query.Expr` dynamically using untrusted user input.
 
 ---
 

@@ -1,10 +1,10 @@
 package pgkit
 
 import (
-	"maps"
 	"context"
 	"fmt"
 	"log/slog"
+	"maps"
 	"sync"
 	"time"
 
@@ -346,12 +346,6 @@ func (db *DB) execWrite(ctx context.Context, runner dbRunner, q query.Query) (*q
 			}
 		}
 		result.Data = map[string]any{"ids": manyIDs}
-	case *query.Upsert:
-		if len(data) > 0 {
-			result.Data = data[0]
-		} else {
-			result.Data = map[string]any{"id": qType.Data["id"]}
-		}
 	default:
 		if len(data) > 0 {
 			result.Data = data[0]

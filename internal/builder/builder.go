@@ -245,6 +245,11 @@ func buildInsert(q *query.Insert, pt *ParamTracker, schema string, autoUpdatedAt
 		v := q.Data[k]
 		colParts = append(colParts, sqlutil.QuoteIdent(k))
 
+		if expr, ok := v.(query.Expr); ok {
+			valParts = append(valParts, string(expr))
+			continue
+		}
+
 		placeholder := pt.Next(v)
 		if t, ok := q.Types[k]; ok {
 			placeholder += "::" + t
@@ -304,6 +309,10 @@ func buildInsertMany(q *query.InsertMany, pt *ParamTracker, schema string, autoU
 		var valParts []string
 		for i, col := range q.Fields {
 			val := row[i]
+			if expr, ok := val.(query.Expr); ok {
+				valParts = append(valParts, string(expr))
+				continue
+			}
 			placeholder := pt.Next(val)
 			if t, ok := q.Types[col]; ok {
 				placeholder += "::" + t
@@ -347,6 +356,11 @@ func buildUpsert(q *query.Upsert, pt *ParamTracker, schema string, autoUpdatedAt
 	for _, k := range keys {
 		v := q.Data[k]
 		colParts = append(colParts, sqlutil.QuoteIdent(k))
+
+		if expr, ok := v.(query.Expr); ok {
+			valParts = append(valParts, string(expr))
+			continue
+		}
 
 		placeholder := pt.Next(v)
 		if t, ok := q.Types[k]; ok {
@@ -399,6 +413,13 @@ func buildUpsert(q *query.Upsert, pt *ParamTracker, schema string, autoUpdatedAt
 		queryStr.WriteString("NOTHING")
 	} else {
 		queryStr.WriteString(strings.Join(updateParts, ", "))
+		if q.Where != nil {
+			cStr := BuildFilter(q.Where, q.Into, pt, q.Types)
+			if cStr != "" {
+				queryStr.WriteString(" WHERE ")
+				queryStr.WriteString(cStr)
+			}
+		}
 	}
 
 	queryStr.WriteString(" RETURNING *")
@@ -420,6 +441,10 @@ func buildUpdate(q *query.Update, pt *ParamTracker, schema string, autoUpdatedAt
 
 	for _, k := range keys {
 		v := q.Data[k]
+		if expr, ok := v.(query.Expr); ok {
+			setParts = append(setParts, fmt.Sprintf("%s = %s", sqlutil.QuoteIdent(k), string(expr)))
+			continue
+		}
 		placeholder := pt.Next(v)
 		if t, ok := q.Types[k]; ok {
 			placeholder += "::" + t
