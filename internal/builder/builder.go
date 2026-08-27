@@ -1,6 +1,7 @@
 package builder
 
 import (
+	"context"
 	"fmt"
 	"slices"
 	"strings"
@@ -9,6 +10,10 @@ import (
 	"github.com/retailancer/pgkit/internal/sqlutil"
 	"github.com/retailancer/pgkit/query"
 )
+
+// ColumnResolver resolves column names for a table. Used when a Join has no Selection
+// to automatically select all columns from the joined table.
+type ColumnResolver func(ctx context.Context, table string) ([]string, error)
 
 // ParamTracker tracks the query parameters to bind placeholders ($1, $2, etc.) deterministically.
 type ParamTracker struct {
@@ -20,10 +25,18 @@ func (pt *ParamTracker) Next(v any) string {
 	return fmt.Sprintf("$%d", len(pt.Params))
 }
 
-func Build(q query.Query, pt *ParamTracker, searchPath string, softDeleteCol string, autoUpdatedAt bool) (string, error) {
+func Build(
+	ctx context.Context,
+	q query.Query,
+	pt *ParamTracker,
+	searchPath string,
+	softDeleteCol string,
+	autoUpdatedAt bool,
+	resolveColumns ColumnResolver,
+) (string, error) {
 	switch queryObj := q.(type) {
 	case *query.Get:
-		return buildGet(queryObj, pt, searchPath, softDeleteCol)
+		return buildGet(ctx, queryObj, pt, searchPath, softDeleteCol, resolveColumns)
 	case *query.Insert:
 		return buildInsert(queryObj, pt, searchPath, autoUpdatedAt)
 	case *query.InsertMany:
@@ -35,7 +48,7 @@ func Build(q query.Query, pt *ParamTracker, searchPath string, softDeleteCol str
 	case *query.Delete:
 		return buildDelete(queryObj, pt, searchPath, softDeleteCol)
 	case *query.Aggregate:
-		return buildAggregate(queryObj, pt, searchPath, softDeleteCol)
+		return buildAggregate(ctx, queryObj, pt, searchPath, softDeleteCol, resolveColumns)
 	default:
 		return "", fmt.Errorf("unsupported query type: %T", q)
 	}
@@ -58,7 +71,14 @@ func shouldSetUpdatedAt(setUpdatedAt *bool, autoUpdatedAt bool) bool {
 	return autoUpdatedAt
 }
 
-func buildGet(q *query.Get, pt *ParamTracker, schema string, softDeleteCol string) (string, error) {
+func buildGet(
+	ctx context.Context,
+	q *query.Get,
+	pt *ParamTracker,
+	schema string,
+	softDeleteCol string,
+	resolveColumns ColumnResolver,
+) (string, error) {
 	var queryStr strings.Builder
 
 	queryStr.WriteString("SELECT ")
@@ -92,7 +112,21 @@ func buildGet(q *query.Get, pt *ParamTracker, schema string, softDeleteCol strin
 			alias = v.From
 		}
 		if len(v.Selection) == 0 {
-			selectionParts = append(selectionParts, fmt.Sprintf("%s AS %s", sqlutil.QuoteIdent(alias, "id"), sqlutil.QuoteIdent(alias+"__id")))
+			if resolveColumns != nil {
+				cols, err := resolveColumns(ctx, v.From)
+				if err != nil {
+					return "", fmt.Errorf("pgkit: failed to resolve columns for join table %q: %w", v.From, err)
+				}
+				if len(cols) == 0 {
+					selectionParts = append(selectionParts, fmt.Sprintf("%s AS %s", sqlutil.QuoteIdent(alias, "id"), sqlutil.QuoteIdent(alias+"__id")))
+				} else {
+					for _, col := range cols {
+						selectionParts = append(selectionParts, fmt.Sprintf("%s AS %s", sqlutil.QuoteIdent(alias, col), sqlutil.QuoteIdent(alias+"__"+col)))
+					}
+				}
+			} else {
+				selectionParts = append(selectionParts, fmt.Sprintf("%s AS %s", sqlutil.QuoteIdent(alias, "id"), sqlutil.QuoteIdent(alias+"__id")))
+			}
 		} else {
 			for _, s := range v.Selection {
 				selectionParts = append(selectionParts, fmt.Sprintf("%s AS %s", sqlutil.QuoteIdent(alias, s), sqlutil.QuoteIdent(alias+"__"+s)))
@@ -514,7 +548,7 @@ func buildDelete(q *query.Delete, pt *ParamTracker, schema string, softDeleteCol
 	return queryStr.String(), nil
 }
 
-func buildAggregate(q *query.Aggregate, pt *ParamTracker, schema string, softDeleteCol string) (string, error) {
+func buildAggregate(ctx context.Context, q *query.Aggregate, pt *ParamTracker, schema string, softDeleteCol string, resolveColumns ColumnResolver) (string, error) {
 	var queryStr strings.Builder
 	queryStr.WriteString("SELECT ")
 
@@ -549,7 +583,21 @@ func buildAggregate(q *query.Aggregate, pt *ParamTracker, schema string, softDel
 			alias = v.From
 		}
 		if len(v.Selection) == 0 {
-			selectParts = append(selectParts, fmt.Sprintf("COUNT(%s)::float AS %s", sqlutil.QuoteIdent(alias, "id"), sqlutil.QuoteIdent(alias+"__count")))
+			if resolveColumns != nil {
+				cols, err := resolveColumns(ctx, v.From)
+				if err != nil {
+					return "", fmt.Errorf("pgkit: failed to resolve columns for join table %q: %w", v.From, err)
+				}
+				if len(cols) == 0 {
+					selectParts = append(selectParts, fmt.Sprintf("COUNT(%s)::float AS %s", sqlutil.QuoteIdent(alias, "id"), sqlutil.QuoteIdent(alias+"__count")))
+				} else {
+					for _, col := range cols {
+						selectParts = append(selectParts, fmt.Sprintf("%s AS %s", sqlutil.QuoteIdent(alias, col), sqlutil.QuoteIdent(alias+"__"+col)))
+					}
+				}
+			} else {
+				selectParts = append(selectParts, fmt.Sprintf("COUNT(%s)::float AS %s", sqlutil.QuoteIdent(alias, "id"), sqlutil.QuoteIdent(alias+"__count")))
+			}
 		} else {
 			for _, s := range v.Selection {
 				selectParts = append(selectParts, fmt.Sprintf("%s AS %s", sqlutil.QuoteIdent(alias, s), sqlutil.QuoteIdent(alias+"__"+s)))

@@ -20,6 +20,12 @@ type User struct {
 	CreatedAt time.Time `json:"created_at"`
 }
 
+type Order struct {
+	ID       string  `json:"id"`
+	Total    float64 `json:"total"`
+	Customer *User   `json:"customer"`
+}
+
 func main() {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
@@ -61,12 +67,24 @@ func main() {
 	}
 	fmt.Println("Created table 'users'.")
 
+	_, err = db.Exec(ctx, `
+		CREATE TABLE IF NOT EXISTS orders (
+			id TEXT PRIMARY KEY,
+			total NUMERIC(10,2) NOT NULL,
+			customer_id TEXT NOT NULL REFERENCES users(id),
+			created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+			deleted_at TIMESTAMPTZ
+		);
+	`)
+	if err != nil {
+		log.Fatalf("Failed to create orders table: %v", err)
+	}
+	fmt.Println("Created table 'orders'.")
+
 	defer func() {
-		_, err = db.Exec(ctx, `DROP TABLE users;`)
-		if err != nil {
-			log.Fatalf("Failed to drop table: %v", err)
-		}
-		fmt.Println("Dropped table 'users'.")
+		_, _ = db.Exec(ctx, `DROP TABLE orders;`)
+		_, _ = db.Exec(ctx, `DROP TABLE users;`)
+		fmt.Println("Dropped tables.")
 	}()
 
 	// insert
@@ -167,6 +185,64 @@ func main() {
 		log.Fatalf("Verification query failed: %v", err)
 	}
 	fmt.Printf("Fetched User after skipped Conditional Upsert: %+v\n", checkedUser)
+
+	// reset Alice's status for the join example
+	err = client.Update(ctx, &query.Update{
+		Table: "users",
+		Data:  map[string]any{"status": "active"},
+		Where: &query.Filter{Eq: map[string]any{"id": aliceID}},
+	})
+	if err != nil {
+		log.Fatalf("Failed to reset Alice's status: %v", err)
+	}
+
+	// insert orders for Alice
+	fmt.Println("\n--- Inserting orders for Alice ---")
+	order1ID, err := client.Insert(ctx, &query.Insert{
+		Into: "orders",
+		Data: map[string]any{
+			"total":       49.99,
+			"customer_id": aliceID,
+		},
+	})
+	if err != nil {
+		log.Fatalf("Insert order 1 failed: %v", err)
+	}
+	_, err = client.Insert(ctx, &query.Insert{
+		Into: "orders",
+		Data: map[string]any{
+			"total":       129.50,
+			"customer_id": aliceID,
+		},
+	})
+	if err != nil {
+		log.Fatalf("Insert order 2 failed: %v", err)
+	}
+	fmt.Printf("Inserted 2 orders for Alice (first order ID: %s)\n", order1ID)
+
+	// join with auto-selection: omit Selection on the Join to get all user fields
+	fmt.Println("\n--- Fetching order with joined customer (auto-select all user columns) ---")
+	var order Order
+	err = client.One(ctx, &query.Get{
+		From:      "orders",
+		Selection: []string{"id", "total"},
+		Where:     &query.Filter{Eq: map[string]any{"id": order1ID}},
+		Include: []query.Join{
+			{
+				From:  "users",
+				Alias: "customer",
+				On:    map[string]string{"customer_id": "id"},
+			},
+		},
+	}, &order)
+	if err != nil {
+		log.Fatalf("Get order with join failed: %v", err)
+	}
+	fmt.Printf("Order: id=%s total=%.2f\n", order.ID, order.Total)
+	if order.Customer != nil {
+		fmt.Printf("Customer: id=%s name=%s email=%s status=%s\n",
+			order.Customer.ID, order.Customer.Name, order.Customer.Email, order.Customer.Status)
+	}
 
 	// stateful transaction
 	fmt.Println("\n--- Running Stateful Transaction ---")

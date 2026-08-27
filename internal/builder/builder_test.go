@@ -1,6 +1,7 @@
 package builder
 
 import (
+	"context"
 	"testing"
 
 	"github.com/retailancer/pgkit/internal/sqlutil"
@@ -23,7 +24,7 @@ func TestBuildInsertDeterministic(t *testing.T) {
 	var expectedSQL string
 	for i := 0; i < 20; i++ {
 		pt := &ParamTracker{}
-		sqlStr, err := Build(q, pt, "public", "", false)
+		sqlStr, err := Build(context.Background(), q, pt, "public", "", false, nil)
 		if err != nil {
 			t.Fatalf("failed to build SQL: %v", err)
 		}
@@ -63,7 +64,7 @@ func TestBuildGetWithJoins(t *testing.T) {
 	}
 
 	pt := &ParamTracker{}
-	sqlStr, err := Build(q, pt, "public", "deleted_at", false)
+	sqlStr, err := Build(context.Background(), q, pt, "public", "deleted_at", false, nil)
 	if err != nil {
 		t.Fatalf("failed to build SELECT: %v", err)
 	}
@@ -92,7 +93,7 @@ func TestBuildGetWithInnerJoin(t *testing.T) {
 	}
 
 	pt := &ParamTracker{}
-	sqlStr, err := Build(q, pt, "public", "", false)
+	sqlStr, err := Build(context.Background(), q, pt, "public", "", false, nil)
 	if err != nil {
 		t.Fatalf("failed to build SELECT: %v", err)
 	}
@@ -115,7 +116,7 @@ func TestBuildUpsert(t *testing.T) {
 	}
 
 	pt := &ParamTracker{}
-	sqlStr, err := Build(q, pt, "public", "", false)
+	sqlStr, err := Build(context.Background(), q, pt, "public", "", false, nil)
 	if err != nil {
 		t.Fatalf("failed to build UPSERT: %v", err)
 	}
@@ -141,7 +142,7 @@ func TestBuildUpsertWithWhere(t *testing.T) {
 	}
 
 	pt := &ParamTracker{}
-	sqlStr, err := Build(q, pt, "public", "", false)
+	sqlStr, err := Build(context.Background(), q, pt, "public", "", false, nil)
 	if err != nil {
 		t.Fatalf("failed to build UPSERT: %v", err)
 	}
@@ -173,7 +174,7 @@ func TestBuildDeleteHardNoSoftFilter(t *testing.T) {
 	}
 
 	pt := &ParamTracker{}
-	sqlStr, err := Build(q, pt, "public", "deleted_at", false)
+	sqlStr, err := Build(context.Background(), q, pt, "public", "deleted_at", false, nil)
 	if err != nil {
 		t.Fatalf("failed to build delete: %v", err)
 	}
@@ -191,7 +192,7 @@ func TestBuildUpdateEmptyDataError(t *testing.T) {
 	}
 
 	pt := &ParamTracker{}
-	_, err := Build(q, pt, "public", "", false)
+	_, err := Build(context.Background(), q, pt, "public", "", false, nil)
 	if err == nil {
 		t.Error("expected error for update with empty data map, got nil")
 	}
@@ -209,7 +210,7 @@ func TestBuildGetEmptyJoinOnConditionError(t *testing.T) {
 	}
 
 	pt := &ParamTracker{}
-	_, err := Build(q, pt, "public", "", false)
+	_, err := Build(context.Background(), q, pt, "public", "", false, nil)
 	if err == nil {
 		t.Error("expected error for join with empty On map, got nil")
 	}
@@ -233,7 +234,7 @@ func TestBuildAggregate(t *testing.T) {
 	}
 
 	pt := &ParamTracker{}
-	sqlStr, err := Build(q, pt, "public", "deleted_at", false)
+	sqlStr, err := Build(context.Background(), q, pt, "public", "deleted_at", false, nil)
 	if err != nil {
 		t.Fatalf("failed to build aggregate query: %v", err)
 	}
@@ -241,6 +242,67 @@ func TestBuildAggregate(t *testing.T) {
 	expected := `SELECT "orders"."category", COALESCE(AVG("orders"."total"), 0)::float AS "total__avg", COALESCE(SUM("orders"."total"), 0)::float AS "total__sum", "customer"."name" AS "customer__name" FROM "public"."orders" LEFT JOIN "public"."users" AS "customer" ON "orders"."customer_id" = "customer"."id" WHERE "public"."orders"."deleted_at" IS NULL GROUP BY "orders"."category"`
 	if sqlStr != expected {
 		t.Errorf("unexpected SQL output:\ngot:  %s\nwant: %s", sqlStr, expected)
+	}
+}
+
+func TestBuildGetJoinWithResolver(t *testing.T) {
+	q := &query.Get{
+		From:      "orders",
+		Selection: []string{"id", "total"},
+		Include: []query.Join{
+			{
+				From:  "users",
+				Alias: "customer",
+				On: map[string]string{
+					"customer_id": "id",
+				},
+			},
+		},
+	}
+
+	resolver := func(_ context.Context, table string) ([]string, error) {
+		if table == "users" {
+			return []string{"id", "name", "email"}, nil
+		}
+		return nil, nil
+	}
+
+	pt := &ParamTracker{}
+	sqlStr, err := Build(context.Background(), q, pt, "public", "", false, resolver)
+	if err != nil {
+		t.Fatalf("failed to build SELECT: %v", err)
+	}
+
+	expectedSQL := `SELECT "orders"."id", "orders"."total", "customer"."id" AS "customer__id", "customer"."name" AS "customer__name", "customer"."email" AS "customer__email" FROM "public"."orders" LEFT JOIN "public"."users" AS "customer" ON "orders"."customer_id" = "customer"."id"`
+	if sqlStr != expectedSQL {
+		t.Errorf("unexpected SQL output:\ngot:  %s\nwant: %s", sqlStr, expectedSQL)
+	}
+}
+
+func TestBuildGetJoinWithNilResolverFallsBackToID(t *testing.T) {
+	q := &query.Get{
+		From:      "orders",
+		Selection: []string{"id"},
+		Include: []query.Join{
+			{
+				From:  "users",
+				Alias: "customer",
+				On: map[string]string{
+					"customer_id": "id",
+				},
+			},
+		},
+	}
+
+	pt := &ParamTracker{}
+	sqlStr, err := Build(context.Background(), q, pt, "public", "", false, nil)
+	if err != nil {
+		t.Fatalf("failed to build SELECT: %v", err)
+	}
+
+	expectedSQL := `SELECT "orders"."id", "customer"."id" AS "customer__id" FROM "public"."orders" LEFT JOIN "public"."users" AS "customer" ON "orders"."customer_id" = "customer"."id"`
+	if sqlStr != expectedSQL {
+		t.Errorf("unexpected SQL output:\ngot:  %s\nwant: %s", sqlStr, expectedSQL)
 	}
 }
 
@@ -254,7 +316,7 @@ func TestBuildExpr(t *testing.T) {
 		Where: &query.Filter{Eq: map[string]any{"id": "123"}},
 	}
 	pt := &ParamTracker{}
-	sqlStr, err := Build(uq, pt, "public", "", false)
+	sqlStr, err := Build(context.Background(), uq, pt, "public", "", false, nil)
 	if err != nil {
 		t.Fatalf("failed to build update: %v", err)
 	}
@@ -274,7 +336,7 @@ func TestBuildExpr(t *testing.T) {
 		},
 	}
 	pt = &ParamTracker{}
-	sqlStr, err = Build(iq, pt, "public", "", false)
+	sqlStr, err = Build(context.Background(), iq, pt, "public", "", false, nil)
 	if err != nil {
 		t.Fatalf("failed to build insert: %v", err)
 	}
@@ -292,7 +354,7 @@ func TestBuildExpr(t *testing.T) {
 		},
 	}
 	pt = &ParamTracker{}
-	sqlStr, err = Build(usq, pt, "public", "", false)
+	sqlStr, err = Build(context.Background(), usq, pt, "public", "", false, nil)
 	if err != nil {
 		t.Fatalf("failed to build upsert: %v", err)
 	}

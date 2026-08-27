@@ -13,23 +13,24 @@
 - [Configuration & Options](#configuration--options)
 - [Client & Lifecycle](#client--lifecycle)
 - [Reading Data](#reading-data)
-  - [One — fetch single record](#one--fetch-single-record)
-  - [Many — fetch list with pagination](#many--fetch-list-with-pagination)
-  - [Count — count matching records](#count--count-matching-records)
-  - [Exec — generic query runner](#exec--generic-query-runner)
+  - [One (fetch single record)](#one-fetch-single-record)
+  - [Many (fetch list with pagination)](#many-fetch-list-with-pagination)
+  - [Count (count matching records)](#count-count-matching-records)
+  - [Exec (generic query runner)](#exec-generic-query-runner)
 - [Writing Data](#writing-data)
   - [Insert](#insert)
-  - [InsertMany — batch insert](#insertmany--batch-insert)
+  - [InsertMany (batch insert)](#insertmany-batch-insert)
   - [Upsert](#upsert)
   - [Update](#update)
   - [Delete](#delete)
   - [Soft Delete](#soft-delete)
-- [Filtering — query.Filter](#filtering--queryfilter)
+- [Filtering (query.Filter)](#filtering-queryfilter)
   - [Operators](#operators)
   - [Logical operators (Op)](#logical-operators-op)
-  - [Filter Groups — nested logic](#filter-groups--nested-logic)
+  - [Filter Groups (nested logic)](#filter-groups-nested-logic)
 - [Joins & Relations](#joins--relations)
   - [One-to-One join](#one-to-one-join)
+  - [Auto-select all joined columns](#auto-select-all-joined-columns)
   - [One-to-Many join](#one-to-many-join)
   - [Join-level filters & ordering](#join-level-filters--ordering)
 - [Aggregates](#aggregates)
@@ -44,7 +45,7 @@
   - [Query logging](#query-logging)
 - [Type Casting](#type-casting)
 - [Transactions](#transactions)
-  - [WithTx — automatic commit/rollback](#withtx--automatic-commitrollback)
+  - [WithTx (automatic commit/rollback)](#withtx-automatic-commitrollback)
   - [Manual transaction control](#manual-transaction-control)
   - [Nested transactions (Savepoints)](#nested-transactions-savepoints)
 - [LISTEN / NOTIFY](#listen--notify)
@@ -52,6 +53,16 @@
 - [ID Generation](#id-generation)
 - [Errors](#errors)
 - [Result Scanning](#result-scanning)
+- [Query Types Reference](#query-types-reference)
+  - [query.Get](#queryget)
+  - [query.Join](#queryjoin)
+  - [query.Insert](#queryinsert)
+  - [query.InsertMany](#queryinsertmany)
+  - [query.Upsert](#queryupsert)
+  - [query.Update](#queryupdate)
+  - [query.Delete](#querydelete)
+  - [query.Aggregate](#queryaggregate)
+  - [query.Filter](#queryfilter)
 
 ---
 
@@ -167,7 +178,7 @@ defer client.Close() // rolls back any uncommitted tx and releases the client
 
 ## Reading Data
 
-### One — fetch single record
+### One (fetch single record)
 
 Fetches exactly one row and scans it into `dest`. Returns `pgkit.ErrNotFound` if no rows match, and `pgkit.ErrMultipleRecords` if more than one row is returned.
 
@@ -179,7 +190,7 @@ err := client.One(ctx, &query.Get{
 }, &user)
 ```
 
-### Many — fetch list with pagination
+### Many (fetch list with pagination)
 
 Fetches all matching rows and returns the total record count (ignoring limit/offset) for pagination. Set `SkipCount: true` to bypass the total record count query for optimal performance when counting is not needed.
 
@@ -196,7 +207,7 @@ total, err := client.Many(ctx, &query.Get{
 fmt.Printf("page has %d users, total is %d\n", len(users), total)
 ```
 
-### Count — count matching records
+### Count (count matching records)
 
 Counts records matching the filter without fetching rows.
 
@@ -207,7 +218,7 @@ count, err := client.Count(ctx, &query.Get{
 })
 ```
 
-### Exec — generic query runner
+### Exec (generic query runner)
 
 Runs any `query.Query` type and returns a raw `*query.Result`.
 
@@ -252,7 +263,7 @@ id, err := client.Insert(ctx, &query.Insert{
 }
 ```
 
-### InsertMany — batch insert
+### InsertMany (batch insert)
 
 Inserts multiple rows in a single round trip. IDs are auto-generated per row. Returns a slice of generated IDs.
 
@@ -371,7 +382,7 @@ err := client.Update(ctx, &query.Update{
 
 ---
 
-## Filtering — query.Filter
+## Filtering (query.Filter)
 
 `query.Filter` builds the `WHERE` clause. All map keys are sorted alphabetically at build time for deterministic SQL and prepared-statement reuse.
 
@@ -419,7 +430,7 @@ By default, all conditions in a single `Filter` are joined with `AND`. Use `Op` 
 
 Constants: `query.And`, `query.Or`.
 
-### Filter Groups — nested logic
+### Filter Groups (nested logic)
 
 `Groups` allows composing arbitrarily nested AND/OR logic. Each group is wrapped in parentheses and appended to the parent filter's conditions.
 
@@ -476,6 +487,31 @@ The `On` map keys are columns on the **parent** table (or `"parentTable.col"` fo
 
 At least one `On` condition is required or the build will error.
 
+### Auto-select all joined columns
+
+When `Selection` is omitted from a `Join`, pgkit automatically queries `information_schema.columns` to discover all columns on the joined table and selects them with the `alias__column` naming convention. This is cached per table for the lifetime of the `DB` instance.
+
+```go
+var order OrderWithCustomer
+
+err := client.One(ctx, &query.Get{
+    From:      "orders",
+    Selection: []string{"id", "total"},
+    Where:     &query.Filter{Eq: map[string]any{"id": orderID}},
+    Include: []query.Join{
+        {
+            From:  "users",
+            Alias: "customer",
+            On:    map[string]string{"customer_id": "id"},
+            // Selection omitted → all columns from "users" are selected
+        },
+    },
+}, &order)
+// order.Customer will contain all user fields (id, name, email, etc.)
+```
+
+If you need explicit control over which columns are returned, provide `Selection` as before.
+
 ### One-to-Many join
 
 Set `Many: true` on a join to aggregate child rows into a slice per parent row.
@@ -502,6 +538,8 @@ total, err := client.Many(ctx, &query.Get{
 ```
 
 When `Many: true`, duplicate parent rows from the join are deduplicated and children are aggregated by matching `id`.
+
+When `Selection` is omitted on a `Many: true` join, all columns from the joined table are auto-discovered and included in the result.
 
 ### Join-level filters & ordering
 
@@ -557,7 +595,7 @@ err = result.Scan(&stats)
 
 `Aggregate` also supports `Include` joins with the same `Join` struct, `Limit`, `Offset`, `IncludeDeleted`, and `Log`.
 
-When a joined table has no `Selection`, it automatically computes `COUNT(alias.id)::float AS alias__count`.
+When a joined table has no `Selection`, all columns from the joined table are auto-discovered and selected (same behavior as `Get` joins).
 
 ---
 
@@ -668,7 +706,7 @@ The same `Types` map works on `Filter` conditions:
 
 ## Transactions
 
-### WithTx — automatic commit/rollback
+### WithTx (automatic commit/rollback)
 
 The cleanest pattern. Commits on success, rolls back automatically if the function returns an error.
 
@@ -734,7 +772,7 @@ err := db.WithTx(ctx, func(tx *pgkit.Tx) error {
         return err
     }
 
-    // nested transaction — uses SAVEPOINT
+    // nested transaction (uses SAVEPOINT)
     nestedErr := tx.WithTx(ctx, func(inner *pgkit.Tx) error {
         return inner.Insert(ctx, &query.Insert{Into: "audit_log", Data: logData})
     })
@@ -864,7 +902,7 @@ type Generator interface {
 }
 ```
 
-Example — UUID v4:
+Example (UUID v4):
 
 ```go
 import "github.com/google/uuid"
@@ -927,6 +965,328 @@ if errors.As(err, &pgErr) {
 | `result.Total`                              | Total count from a Many query (ignoring limit/offset)       |
 
 `dest` must always be a non-nil pointer. For collections it must be a pointer to a slice.
+
+---
+
+## Query Types Reference
+
+Detailed field-level documentation for all query types.
+
+### query.Get
+
+Fetches rows from a table with filtering, ordering, pagination, and joins.
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `From` | `string` | **Required.** The primary table to query (e.g. `"users"`). |
+| `Selection` | `[]string` | Columns to select from the primary table. If empty/nil, selects all columns (`"table".*`). |
+| `Where` | `*Filter` | WHERE clause filter. `nil` means no filter (all rows). |
+| `Order` | `map[string]string` | ORDER BY clauses. Keys are column names, values are `"ASC"` or `"DESC"`. Sorted alphabetically at build time. Cannot be used with `ShuffleOn`. |
+| `GroupBy` | `[]string` | GROUP BY columns from the primary table. |
+| `DistinctOn` | `[]string` | DISTINCT ON expressions. Supports `"table.col"` dot notation. |
+| `Limit` | `int` | Maximum number of rows to return. `0` means no limit. |
+| `Offset` | `int` | Number of rows to skip. `0` means no offset. |
+| `Include` | `[]Join` | JOIN definitions for related tables. |
+| `Types` | `map[string]string` | Type cast overrides for WHERE parameters (e.g. `{"status": "text"}` → `$1::text`). |
+| `IncludeDeleted` | `*bool` | Override the global soft-delete filter. `nil` = inherit default, `true` = include deleted, `false` = force exclude. |
+| `Log` | `bool` | If `true`, log the interpolated SQL to the configured Logger. |
+| `ForUpdate` | `bool` | If `true`, appends `FOR UPDATE` to lock selected rows within the transaction. |
+| `ShuffleOn` | `string` | Column name for daily-stable pseudo-random ordering via `md5(col \|\| 'YYYY-MM-DD-HH')`. Overrides `Order`. |
+| `SkipCount` | `bool` | If `true`, skip the `COUNT(*)` query in `Many()` for better performance. |
+
+**Example (full query):**
+
+```go
+client.Many(ctx, &query.Get{
+    From:      "orders",
+    Selection: []string{"id", "total", "status"},
+    Where: &query.Filter{
+        Eq:  map[string]any{"status": "completed"},
+        Gte: map[string]any{"total": 100},
+    },
+    Order:    map[string]string{"created_at": "DESC"},
+    Limit:    25,
+    Offset:   0,
+    Include: []query.Join{
+        {
+            From:      "users",
+            Alias:     "customer",
+            Selection: []string{"name", "email"},
+            On:        map[string]string{"customer_id": "id"},
+        },
+    },
+}, &orders)
+```
+
+### query.Join
+
+Defines a JOIN to a related table. Used within `Get.Include` or `Aggregate.Include`.
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `Type` | `JoinType` | Join type: `query.LeftJoin` (default), `query.InnerJoin`, `query.RightJoin`, or `query.FullJoin`. |
+| `From` | `string` | **Required.** The table to join (e.g. `"users"`). |
+| `Alias` | `string` | SQL alias for the joined table. Defaults to `From` if empty. Used as the key in nested result maps. |
+| `Selection` | `[]string` | Columns to select from the joined table. If empty/nil, all columns are auto-discovered from `information_schema` and selected with the `alias__col` naming convention. Falls back to `alias.id` only if the resolver is unavailable. |
+| `Many` | `bool` | If `true`, treats the join as one-to-many: duplicate parent rows are deduplicated and child rows are aggregated into a slice. |
+| `On` | `map[string]string` | **Required.** Join conditions. Keys are parent table columns (or `"table.col"` for explicit qualification), values are joined table columns. At least one condition required. |
+| `Where` | `*Filter` | Join-level WHERE filter, appended to the main WHERE clause with `AND`. |
+| `Types` | `map[string]string` | Type cast overrides for join-level filter parameters. |
+| `Order` | `map[string]string` | Join-level ORDER BY clauses. |
+| `GroupBy` | `[]string` | Join-level GROUP BY columns. |
+
+**Example (one-to-many with filter):**
+
+```go
+Include: []query.Join{
+    {
+        From:  "comments",
+        Alias: "comments",
+        Many:  true,
+        On:    map[string]string{"id": "post_id"},
+        Where: &query.Filter{Eq: map[string]any{"approved": true}},
+        Order: map[string]string{"created_at": "ASC"},
+    },
+},
+```
+
+### query.Insert
+
+Inserts a single row.
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `Into` | `string` | **Required.** The target table name. |
+| `Data` | `map[string]any` | **Required.** Column-value pairs to insert. Supports `query.Expr` for server-side expressions. |
+| `Types` | `map[string]string` | Type cast overrides (e.g. `{"metadata": "jsonb"}`). |
+| `SetUpdatedAt` | `*bool` | Override the global `AutoUpdatedAt` setting for this query. |
+
+**Notes:**
+- If `"id"` is not present in `Data`, it is auto-generated based on the configured `IDGenerator`.
+- Returns the inserted row's ID as a string.
+
+**Example:**
+
+```go
+id, err := client.Insert(ctx, &query.Insert{
+    Into: "users",
+    Data: map[string]any{"name": "Alice", "email": "alice@example.com"},
+})
+```
+
+### query.InsertMany
+
+Inserts multiple rows in a single round trip.
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `Into` | `string` | **Required.** The target table name. |
+| `Fields` | `[]string` | **Required.** Column names defining the order of values in each row. |
+| `Values` | `[][]any` | **Required.** Each inner slice corresponds to one row, with values matching `Fields` order. |
+| `Types` | `map[string]string` | Type cast overrides. |
+| `SetUpdatedAt` | `*bool` | Override the global `AutoUpdatedAt` setting. |
+
+**Notes:**
+- If `"id"` is in `Fields`, IDs are auto-generated for rows where the value is `nil` or missing.
+- If `"id"` is not in `Fields`, it is appended automatically with generated IDs.
+- Returns a slice of all inserted IDs.
+
+**Example:**
+
+```go
+ids, err := client.InsertMany(ctx, &query.InsertMany{
+    Into:   "tags",
+    Fields: []string{"name", "color"},
+    Values: [][]any{
+        {"Go",     "#00ADD8"},
+        {"Rust",   "#CE422B"},
+        {"Python", "#3776AB"},
+    },
+})
+```
+
+### query.Upsert
+
+Atomically inserts or updates via `INSERT ... ON CONFLICT DO UPDATE`.
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `Into` | `string` | **Required.** The target table name. |
+| `ConflictOn` | `[]string` | **Required.** Column(s) that must have a unique constraint. Used as the `ON CONFLICT` target. |
+| `Data` | `map[string]any` | **Required.** Column-value pairs. The `id` field and conflict columns are never overwritten on conflict. Supports `query.Expr`. |
+| `Where` | `*Filter` | Conditional update filter. If set, the `DO UPDATE SET` clause includes a `WHERE` condition. |
+| `Types` | `map[string]string` | Type cast overrides. |
+| `SetUpdatedAt` | `*bool` | Override the global `AutoUpdatedAt` setting. |
+
+**Notes:**
+- On conflict, only non-`id`, non-conflict columns are updated.
+- `Where` makes the update conditional (e.g., only update if not banned).
+
+**Example:**
+
+```go
+id, err := client.Upsert(ctx, &query.Upsert{
+    Into:       "users",
+    ConflictOn: []string{"email"},
+    Data: map[string]any{
+        "email": "alice@example.com",
+        "name":  "Alice Updated",
+    },
+})
+```
+
+### query.Update
+
+Updates rows matching the filter.
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `Table` | `string` | **Required.** The target table name. |
+| `Data` | `map[string]any` | **Required.** Column-value pairs to set. At least one field required. Supports `query.Expr`. |
+| `Where` | `*Filter` | WHERE clause filter. `nil` updates all rows (use with caution). |
+| `Types` | `map[string]string` | Type cast overrides. |
+| `SetUpdatedAt` | `*bool` | Override the global `AutoUpdatedAt` setting. |
+
+**Notes:**
+- Returns `pgkit.ErrNotFound` if no rows were affected.
+- Always include a `Where` filter unless you intend to update all rows.
+
+**Example:**
+
+```go
+err := client.Update(ctx, &query.Update{
+    Table: "users",
+    Data:  map[string]any{"name": "Bob"},
+    Where: &query.Filter{Eq: map[string]any{"id": "abc123"}},
+})
+```
+
+### query.Delete
+
+Deletes rows matching the filter.
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `From` | `string` | **Required.** The target table name. |
+| `Where` | `*Filter` | WHERE clause filter. `nil` deletes all rows (use with caution). |
+| `Soft` | `bool` | If `true`, performs a soft delete (sets `deleted_at` column). Requires `SoftDeleteColumn` in `Options`. If `false`, performs a hard delete. |
+| `IncludeDeleted` | `*bool` | Override the global soft-delete filter for the WHERE clause. |
+
+**Notes:**
+- Hard delete (`Soft: false`) permanently removes rows.
+- Soft delete (`Soft: true`) sets `deleted_at` to the current timestamp.
+- Always include a `Where` filter unless you intend to delete all rows.
+
+**Example:**
+
+```go
+// Hard delete
+err := client.Delete(ctx, &query.Delete{
+    From:  "users",
+    Where: &query.Filter{Eq: map[string]any{"id": "abc123"}},
+    Soft:  false,
+})
+
+// Soft delete
+err := client.Delete(ctx, &query.Delete{
+    From:  "users",
+    Where: &query.Filter{Eq: map[string]any{"id": "abc123"}},
+    Soft:  true,
+})
+```
+
+### query.Aggregate
+
+Computes aggregate functions across rows with optional grouping and joins.
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `From` | `string` | **Required.** The primary table to aggregate. |
+| `Fields` | `[]string` | Plain SELECT columns (typically the `GROUP BY` columns). |
+| `Avg` | `[]string` | Columns to compute `COALESCE(AVG(col), 0)::float` on. Result alias: `col__avg`. |
+| `Count` | `[]string` | Columns to compute `COALESCE(COUNT(col), 0)::float` on. Result alias: `col__count`. |
+| `Max` | `[]string` | Columns to compute `COALESCE(MAX(col), 0)::float` on. Result alias: `col__max`. |
+| `Min` | `[]string` | Columns to compute `COALESCE(MIN(col), 0)::float` on. Result alias: `col__min`. |
+| `Sum` | `[]string` | Columns to compute `COALESCE(SUM(col), 0)::float` on. Result alias: `col__sum`. |
+| `GroupBy` | `[]string` | GROUP BY columns. |
+| `Where` | `*Filter` | WHERE clause filter. |
+| `Include` | `[]Join` | JOIN definitions. When a join has no `Selection`, all columns are auto-discovered. |
+| `Order` | `map[string]string` | ORDER BY clauses. |
+| `Limit` | `int` | Maximum number of rows. `0` means no limit. |
+| `Offset` | `int` | Number of rows to skip. |
+| `Log` | `bool` | If `true`, log the interpolated SQL. |
+| `IncludeDeleted` | `*bool` | Override the global soft-delete filter. |
+
+**Notes:**
+- All aggregate functions return `float64` via `COALESCE(..., 0)::float` for consistent scanning.
+- Result aliases use the double-underscore convention (`col__avg`, `col__sum`, etc.) which map to JSON tags.
+- When using joins without `Selection`, all joined columns are auto-selected.
+
+**Example:**
+
+```go
+type CategoryStats struct {
+    Category string  `json:"category"`
+    AvgPrice float64 `json:"price__avg"`
+    TotalSum float64 `json:"total__sum"`
+    Count    float64 `json:"id__count"`
+}
+
+result, err := client.Exec(ctx, &query.Aggregate{
+    From:    "orders",
+    Fields:  []string{"category"},
+    Avg:     []string{"price"},
+    Sum:     []string{"total"},
+    Count:   []string{"id"},
+    GroupBy: []string{"category"},
+    Where:   &query.Filter{Eq: map[string]any{"status": "completed"}},
+})
+
+var stats []CategoryStats
+err = result.Scan(&stats)
+```
+
+### query.Filter
+
+Builds WHERE clause conditions. All map keys are sorted alphabetically for deterministic SQL generation.
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `Eq` | `map[string]any` | `col = $1`. `nil` value generates `col IS NULL`. |
+| `Neq` | `map[string]any` | `col != $1`. `nil` value generates `col IS NOT NULL`. |
+| `Gt` | `map[string]any` | `col > $1`. |
+| `Gte` | `map[string]any` | `col >= $1`. |
+| `Lt` | `map[string]any` | `col < $1`. |
+| `Lte` | `map[string]any` | `col <= $1`. |
+| `In` | `map[string][]any` | `col IN ($1, $2, ...)`. Empty slice generates `FALSE`. |
+| `NotIn` | `map[string][]any` | `col NOT IN ($1, $2, ...)`. Empty slice generates `TRUE`. |
+| `Like` | `map[string]string` | `col LIKE $1` (case-sensitive). |
+| `ILike` | `map[string]string` | `col ILIKE $1` (case-insensitive). |
+| `Regexp` | `map[string]string` | `col ~* $1` (PostgreSQL case-insensitive regex). |
+| `IsNull` | `[]string` | `col IS NULL` for each column. |
+| `IsNotNull` | `[]string` | `col IS NOT NULL` for each column. |
+| `Op` | `FilterOp` | Logical operator joining conditions: `query.And` (default) or `query.Or`. |
+| `Groups` | `[]FilterGroup` | Nested filter groups for arbitrarily nested AND/OR logic. Each group is wrapped in parentheses. |
+| `Types` | `map[string]string` | Type cast overrides for filter parameters (e.g. `{"status": "text"}`). |
+
+**Example (complex filter):**
+
+```go
+&query.Filter{
+    Op: query.And,
+    Eq: map[string]any{"organization_id": orgID},
+    Groups: []query.FilterGroup{
+        {
+            Name: "search",
+            Filter: &query.Filter{
+                Op:   query.Or,
+                ILike: map[string]string{"name": "%" + searchTerm + "%"},
+                Like:  map[string]string{"email": "%" + searchTerm + "%"},
+            },
+        },
+    },
+}
+```
 
 ---
 

@@ -19,8 +19,12 @@ import (
 	"github.com/retailancer/pgkit/rows"
 )
 
+// Logger is the interface for structured logging. Any logger that exposes Info and Error
+// methods can be passed via Options.Logger. Defaults to slog.Default().
 type Logger interface {
+	// Info logs a structured informational message (e.g. query execution).
 	Info(msg string, args ...any)
+	// Error logs a structured error message.
 	Error(msg string, args ...any)
 }
 
@@ -36,17 +40,51 @@ func (d *defaultLogger) Error(msg string, args ...any) {
 	d.l.Error(msg, args...)
 }
 
+// Options configures the database connection pool and global behavior.
 type Options struct {
-	MaxConns          int32
-	MinConns          int32
-	MaxConnLifetime   time.Duration
-	MaxConnIdleTime   time.Duration
+	// MaxConns is the maximum number of connections in the pool. Defaults to pgxpool default (_cap).
+	MaxConns int32
+
+	// MinConns is the minimum number of idle connections maintained in the pool. Defaults to pgxpool default (2).
+	MinConns int32
+
+	// MaxConnLifetime is the maximum lifetime of any connection in the pool.
+	// After this duration, the connection is closed and replaced. Defaults to 5 minutes.
+	MaxConnLifetime time.Duration
+
+	// MaxConnIdleTime is the maximum time a connection can sit idle in the pool before
+	// being closed. Defaults to pgxpool default (5 minutes).
+	MaxConnIdleTime time.Duration
+
+	// HealthCheckPeriod is how often the pool checks connection health. Defaults to pgxpool default (0, disabled).
 	HealthCheckPeriod time.Duration
-	Schema            string
-	SoftDeleteColumn  string
-	IDGenerator       identifier.Generator
-	AutoUpdatedAt     bool
-	Logger            Logger
+
+	// Schema is the PostgreSQL schema to use for all queries (e.g. "public", "app").
+	// Used to qualify table names in generated SQL. Defaults to "public" if empty.
+	Schema string
+
+	// SoftDeleteColumn is the column name used for soft-delete support (e.g. "deleted_at").
+	// When set, Get and Aggregate queries automatically exclude rows where this column IS NULL
+	// is false (i.e. soft-deleted rows are excluded). Delete with Soft: true sets this column
+	// to the current timestamp instead of removing the row.
+	// Leave empty to disable soft-delete support globally.
+	SoftDeleteColumn string
+
+	// IDGenerator generates client-side IDs for Insert and InsertMany when the "id" field
+	// is not provided in Data. Defaults to identifier.NewIgnoreGenerator() which relies on
+	// database-side ID generation (e.g. SERIAL, IDENTITY, or column defaults).
+	// Use identifier.NewCUID2Generator() for client-side CUID2 generation.
+	IDGenerator identifier.Generator
+
+	// AutoUpdatedAt automatically sets the "updated_at" column to NOW() on all write
+	// operations (Insert, InsertMany, Upsert, Update) when the column is present.
+	// Can be overridden per-query using SetUpdatedAt on each query type.
+	AutoUpdatedAt bool
+
+	// Logger receives structured log messages for query execution and errors.
+	// Must implement the pgkit.Logger interface (Info and Error methods).
+	// Defaults to slog.Default() if nil.
+	Logger Logger
 }
 
 type DB struct {
@@ -54,6 +92,10 @@ type DB struct {
 	opts    Options
 	mu      sync.RWMutex
 	clients map[string]*Client
+	columns struct {
+		cache map[string][]string
+		mu    sync.RWMutex
+	}
 }
 
 type dbRunner interface {
@@ -62,8 +104,30 @@ type dbRunner interface {
 	Exec(ctx context.Context, sql string, args ...any) (pgconn.CommandTag, error)
 }
 
+// Bool is a convenience helper that returns a pointer to the given boolean value.
+// Useful for setting IncludeDeleted and SetUpdatedAt fields on query types.
 func Bool(v bool) *bool {
 	return &v
+}
+
+func (db *DB) columnResolver(ctx context.Context, table string) ([]string, error) {
+	db.columns.mu.RLock()
+	if cols, ok := db.columns.cache[table]; ok {
+		db.columns.mu.RUnlock()
+		return cols, nil
+	}
+	db.columns.mu.RUnlock()
+
+	cols, err := sqlutil.GetTableColumns(ctx, db.pool, db.opts.Schema, table)
+	if err != nil {
+		return nil, err
+	}
+
+	db.columns.mu.Lock()
+	db.columns.cache[table] = cols
+	db.columns.mu.Unlock()
+
+	return cols, nil
 }
 
 func New(ctx context.Context, dsn string, opts Options) (*DB, error) {
@@ -114,6 +178,12 @@ func New(ctx context.Context, dsn string, opts Options) (*DB, error) {
 		pool:    pool,
 		opts:    opts,
 		clients: make(map[string]*Client),
+		columns: struct {
+			cache map[string][]string
+			mu    sync.RWMutex
+		}{
+			cache: make(map[string][]string),
+		},
 	}, nil
 }
 
@@ -181,7 +251,15 @@ func (db *DB) WithTx(ctx context.Context, fn func(tx *Tx) error) error {
 
 func (db *DB) execGet(ctx context.Context, runner dbRunner, q *query.Get, many bool) (*query.Result, error) {
 	pt := &builder.ParamTracker{}
-	sqlStr, err := builder.Build(q, pt, db.opts.Schema, db.opts.SoftDeleteColumn, db.opts.AutoUpdatedAt)
+	sqlStr, err := builder.Build(
+		ctx,
+		q,
+		pt,
+		db.opts.Schema,
+		db.opts.SoftDeleteColumn,
+		db.opts.AutoUpdatedAt,
+		db.columnResolver,
+	)
 	if err != nil {
 		return nil, err
 	}
@@ -312,7 +390,7 @@ func (db *DB) execWrite(ctx context.Context, runner dbRunner, q query.Query) (*q
 	}
 
 	pt := &builder.ParamTracker{}
-	sqlStr, err := builder.Build(q, pt, db.opts.Schema, db.opts.SoftDeleteColumn, db.opts.AutoUpdatedAt)
+	sqlStr, err := builder.Build(ctx, q, pt, db.opts.Schema, db.opts.SoftDeleteColumn, db.opts.AutoUpdatedAt, db.columnResolver)
 	if err != nil {
 		return nil, err
 	}
@@ -361,7 +439,7 @@ func (db *DB) exec(ctx context.Context, runner dbRunner, q query.Query) (*query.
 		return db.execGet(ctx, runner, queryVal, false)
 	case *query.Aggregate:
 		pt := &builder.ParamTracker{}
-		sqlStr, err := builder.Build(q, pt, db.opts.Schema, db.opts.SoftDeleteColumn, db.opts.AutoUpdatedAt)
+		sqlStr, err := builder.Build(ctx, q, pt, db.opts.Schema, db.opts.SoftDeleteColumn, db.opts.AutoUpdatedAt, db.columnResolver)
 		if err != nil {
 			return nil, err
 		}
@@ -417,7 +495,7 @@ func (db *DB) count(ctx context.Context, runner dbRunner, q *query.Get) (int64, 
 	countQ.Offset = 0
 	countQ.ForUpdate = false
 	ptCount := &builder.ParamTracker{}
-	countSQL, err := builder.Build(countQ, ptCount, db.opts.Schema, db.opts.SoftDeleteColumn, db.opts.AutoUpdatedAt)
+	countSQL, err := builder.Build(ctx, countQ, ptCount, db.opts.Schema, db.opts.SoftDeleteColumn, db.opts.AutoUpdatedAt, db.columnResolver)
 	if err != nil {
 		return 0, err
 	}

@@ -1,6 +1,7 @@
 package builder
 
 import (
+	"context"
 	"strings"
 	"testing"
 
@@ -59,7 +60,7 @@ func TestBuildInsertManyBoundsCheck(t *testing.T) {
 	}
 
 	pt := &ParamTracker{}
-	_, err := Build(q, pt, "public", "", false)
+	_, err := Build(context.Background(), q, pt, "public", "", false, nil)
 	if err == nil {
 		t.Fatal("expected error from Build due to mismatched columns and values, got nil")
 	}
@@ -80,7 +81,7 @@ func TestBuildUpsertCompositeConflict(t *testing.T) {
 	}
 
 	pt := &ParamTracker{}
-	sqlStr, err := Build(q, pt, "public", "", false)
+	sqlStr, err := Build(context.Background(), q, pt, "public", "", false, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
