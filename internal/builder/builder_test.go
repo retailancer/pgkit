@@ -306,6 +306,113 @@ func TestBuildGetJoinWithNilResolverFallsBackToID(t *testing.T) {
 	}
 }
 
+func TestBuildGetWithOmit(t *testing.T) {
+	q := &query.Get{
+		From:  "users",
+		Omit:  []string{"email", "status"},
+		Where: &query.Filter{Eq: map[string]any{"id": "abc"}},
+	}
+
+	resolver := func(_ context.Context, table string) ([]string, error) {
+		if table == "users" {
+			return []string{"id", "name", "email", "status", "created_at"}, nil
+		}
+		return nil, nil
+	}
+
+	pt := &ParamTracker{}
+	sqlStr, err := Build(context.Background(), q, pt, "public", "", false, resolver)
+	if err != nil {
+		t.Fatalf("failed to build SELECT: %v", err)
+	}
+
+	expectedSQL := `SELECT "users"."id", "users"."name", "users"."created_at" FROM "public"."users" WHERE ("users"."id" = $1)`
+	if sqlStr != expectedSQL {
+		t.Errorf("unexpected SQL output:\ngot:  %s\nwant: %s", sqlStr, expectedSQL)
+	}
+}
+
+func TestBuildGetWithJoinOmit(t *testing.T) {
+	q := &query.Get{
+		From:      "orders",
+		Selection: []string{"id", "total"},
+		Include: []query.Join{
+			{
+				From:  "users",
+				Alias: "customer",
+				Omit:  []string{"email", "status"},
+				On:    map[string]string{"customer_id": "id"},
+			},
+		},
+	}
+
+	resolver := func(_ context.Context, table string) ([]string, error) {
+		if table == "users" {
+			return []string{"id", "name", "email", "status", "created_at"}, nil
+		}
+		return nil, nil
+	}
+
+	pt := &ParamTracker{}
+	sqlStr, err := Build(context.Background(), q, pt, "public", "", false, resolver)
+	if err != nil {
+		t.Fatalf("failed to build SELECT: %v", err)
+	}
+
+	expectedSQL := `SELECT "orders"."id", "orders"."total", "customer"."id" AS "customer__id", "customer"."name" AS "customer__name", "customer"."created_at" AS "customer__created_at" FROM "public"."orders" LEFT JOIN "public"."users" AS "customer" ON "orders"."customer_id" = "customer"."id"`
+	if sqlStr != expectedSQL {
+		t.Errorf("unexpected SQL output:\ngot:  %s\nwant: %s", sqlStr, expectedSQL)
+	}
+}
+
+func TestBuildGetWithOmitAndSelectionError(t *testing.T) {
+	q := &query.Get{
+		From:      "users",
+		Selection: []string{"id"},
+		Omit:      []string{"email"},
+	}
+
+	pt := &ParamTracker{}
+	_, err := Build(context.Background(), q, pt, "public", "", false, nil)
+	if err == nil {
+		t.Error("expected error for Get with both Selection and Omit, got nil")
+	}
+}
+
+func TestBuildGetWithJoinOmitAndSelectionError(t *testing.T) {
+	q := &query.Get{
+		From: "orders",
+		Include: []query.Join{
+			{
+				From:      "users",
+				Alias:     "customer",
+				Selection: []string{"name"},
+				Omit:      []string{"email"},
+				On:        map[string]string{"customer_id": "id"},
+			},
+		},
+	}
+
+	pt := &ParamTracker{}
+	_, err := Build(context.Background(), q, pt, "public", "", false, nil)
+	if err == nil {
+		t.Error("expected error for Join with both Selection and Omit, got nil")
+	}
+}
+
+func TestBuildGetWithOmitNilResolverError(t *testing.T) {
+	q := &query.Get{
+		From: "users",
+		Omit: []string{"email"},
+	}
+
+	pt := &ParamTracker{}
+	_, err := Build(context.Background(), q, pt, "public", "", false, nil)
+	if err == nil {
+		t.Error("expected error for Omit with nil resolver, got nil")
+	}
+}
+
 func TestBuildExpr(t *testing.T) {
 	uq := &query.Update{
 		Table: "users",

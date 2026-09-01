@@ -98,12 +98,36 @@ func buildGet(
 	}
 
 	var selectionParts []string
-	for _, v := range q.Selection {
-		selectionParts = append(selectionParts, sqlutil.QuoteIdent(q.From, v))
+	if len(q.Omit) > 0 && len(q.Selection) > 0 {
+		return "", fmt.Errorf("pgkit: Selection and Omit cannot both be set on Get for table %q", q.From)
 	}
-
-	if len(selectionParts) == 0 {
-		selectionParts = append(selectionParts, sqlutil.QuoteIdent(q.From)+".*")
+	if len(q.Omit) > 0 {
+		if resolveColumns == nil {
+			return "", fmt.Errorf("pgkit: Omit requires a column resolver (use DB.Client for queries)")
+		}
+		allCols, err := resolveColumns(ctx, q.From)
+		if err != nil {
+			return "", fmt.Errorf("pgkit: failed to resolve columns for table %q: %w", q.From, err)
+		}
+		omitSet := make(map[string]bool, len(q.Omit))
+		for _, ex := range q.Omit {
+			omitSet[ex] = true
+		}
+		for _, col := range allCols {
+			if !omitSet[col] {
+				selectionParts = append(selectionParts, sqlutil.QuoteIdent(q.From, col))
+			}
+		}
+		if len(selectionParts) == 0 {
+			return "", fmt.Errorf("pgkit: all columns omitted from table %q", q.From)
+		}
+	} else {
+		for _, v := range q.Selection {
+			selectionParts = append(selectionParts, sqlutil.QuoteIdent(q.From, v))
+		}
+		if len(selectionParts) == 0 {
+			selectionParts = append(selectionParts, sqlutil.QuoteIdent(q.From)+".*")
+		}
 	}
 
 	for _, v := range q.Include {
@@ -111,7 +135,34 @@ func buildGet(
 		if alias == "" {
 			alias = v.From
 		}
-		if len(v.Selection) == 0 {
+		if len(v.Omit) > 0 && len(v.Selection) > 0 {
+			return "", fmt.Errorf("pgkit: Selection and Omit cannot both be set on Join for table %q", v.From)
+		}
+		if len(v.Omit) > 0 {
+			if resolveColumns == nil {
+				return "", fmt.Errorf("pgkit: Join Omit requires a column resolver (use DB.Client for queries)")
+			}
+			cols, err := resolveColumns(ctx, v.From)
+			if err != nil {
+				return "", fmt.Errorf("pgkit: failed to resolve columns for join table %q: %w", v.From, err)
+			}
+			omitSet := make(map[string]bool, len(v.Omit))
+			for _, ex := range v.Omit {
+				omitSet[ex] = true
+			}
+			var filtered []string
+			for _, col := range cols {
+				if !omitSet[col] {
+					filtered = append(filtered, col)
+				}
+			}
+			if len(filtered) == 0 {
+				return "", fmt.Errorf("pgkit: all columns omitted from join table %q", v.From)
+			}
+			for _, col := range filtered {
+				selectionParts = append(selectionParts, fmt.Sprintf("%s AS %s", sqlutil.QuoteIdent(alias, col), sqlutil.QuoteIdent(alias+"__"+col)))
+			}
+		} else if len(v.Selection) == 0 {
 			if resolveColumns != nil {
 				cols, err := resolveColumns(ctx, v.From)
 				if err != nil {
@@ -582,7 +633,34 @@ func buildAggregate(ctx context.Context, q *query.Aggregate, pt *ParamTracker, s
 		if alias == "" {
 			alias = v.From
 		}
-		if len(v.Selection) == 0 {
+		if len(v.Omit) > 0 && len(v.Selection) > 0 {
+			return "", fmt.Errorf("pgkit: Selection and Omit cannot both be set on Join for table %q", v.From)
+		}
+		if len(v.Omit) > 0 {
+			if resolveColumns == nil {
+				return "", fmt.Errorf("pgkit: Join Omit requires a column resolver (use DB.Client for queries)")
+			}
+			cols, err := resolveColumns(ctx, v.From)
+			if err != nil {
+				return "", fmt.Errorf("pgkit: failed to resolve columns for join table %q: %w", v.From, err)
+			}
+			omitSet := make(map[string]bool, len(v.Omit))
+			for _, ex := range v.Omit {
+				omitSet[ex] = true
+			}
+			var filtered []string
+			for _, col := range cols {
+				if !omitSet[col] {
+					filtered = append(filtered, col)
+				}
+			}
+			if len(filtered) == 0 {
+				return "", fmt.Errorf("pgkit: Omit would remove all columns from join table %q", v.From)
+			}
+			for _, col := range filtered {
+				selectParts = append(selectParts, fmt.Sprintf("%s AS %s", sqlutil.QuoteIdent(alias, col), sqlutil.QuoteIdent(alias+"__"+col)))
+			}
+		} else if len(v.Selection) == 0 {
 			if resolveColumns != nil {
 				cols, err := resolveColumns(ctx, v.From)
 				if err != nil {

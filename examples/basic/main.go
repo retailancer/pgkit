@@ -244,6 +244,50 @@ func main() {
 			order.Customer.ID, order.Customer.Name, order.Customer.Email, order.Customer.Status)
 	}
 
+	// omit specific columns from the primary table
+	fmt.Println("\n--- Fetching user with omitted columns ---")
+	var partialUser User
+	err = client.One(ctx, &query.Get{
+		From:  "users",
+		Omit:  []string{"email", "status"}, // all other columns are selected
+		Where: &query.Filter{Eq: map[string]any{"id": aliceID}},
+	}, &partialUser)
+	if err != nil {
+		log.Fatalf("Get user with omit failed: %v", err)
+	}
+	fmt.Printf("Partial User (no email/status): id=%s name=%s email=%s status=%s\n",
+		partialUser.ID, partialUser.Name, partialUser.Email, partialUser.Status)
+
+	// omit specific columns from a join
+	fmt.Println("\n--- Fetching order with omitted customer columns ---")
+	type OrderPartial struct {
+		ID       string  `json:"id"`
+		Total    float64 `json:"total"`
+		Customer *User   `json:"customer"`
+	}
+	var partialOrder OrderPartial
+	err = client.One(ctx, &query.Get{
+		From:      "orders",
+		Selection: []string{"id", "total"},
+		Where:     &query.Filter{Eq: map[string]any{"id": order1ID}},
+		Include: []query.Join{
+			{
+				From:  "users",
+				Alias: "customer",
+				Omit:  []string{"email", "status", "created_at"}, // omit sensitive/internal fields
+				On:    map[string]string{"customer_id": "id"},
+			},
+		},
+	}, &partialOrder)
+	if err != nil {
+		log.Fatalf("Get order with join omit failed: %v", err)
+	}
+	fmt.Printf("Order: id=%s total=%.2f\n", partialOrder.ID, partialOrder.Total)
+	if partialOrder.Customer != nil {
+		fmt.Printf("Customer (partial): id=%s name=%s email=%s status=%s\n",
+			partialOrder.Customer.ID, partialOrder.Customer.Name, partialOrder.Customer.Email, partialOrder.Customer.Status)
+	}
+
 	// stateful transaction
 	fmt.Println("\n--- Running Stateful Transaction ---")
 	err = client.WithTx(ctx, func(tx *pgkit.Tx) error {

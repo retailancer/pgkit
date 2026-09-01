@@ -13,7 +13,13 @@ type Get struct {
 	// Selection is the list of columns to select from the primary table.
 	// Each column is qualified with the table name (e.g. "users"."name").
 	// If empty or nil, all columns are selected ("table".*).
+	// Cannot be used together with Omit (mutually exclusive).
 	Selection []string
+
+	// Omit is the list of columns to omit from the primary table's SELECT.
+	// When set, all columns except these are selected (denylist mode).
+	// Cannot be used together with Selection (mutually exclusive).
+	Omit []string
 
 	// Where is the filter applied as the WHERE clause. Nil means no filter (all rows).
 	// Supports Eq, Neq, Gt, Gte, Lt, Lte, In, NotIn, Like, ILike, Regexp, IsNull, IsNotNull,
@@ -98,9 +104,14 @@ type Join struct {
 	Alias string
 
 	// Selection is the list of columns to select from the joined table.
-	// If empty or nil, all columns are auto-discovered. Falls back to selecting only alias.id
-	// if the column resolver is unavailable.
+	// If empty or nil, all columns are auto-discovered.
+	// Cannot be used together with Omit (mutually exclusive).
 	Selection []string
+
+	// Omit is the list of columns to omit from the joined table's SELECT.
+	// When set, all columns except these are auto-discovered and selected (denylist mode).
+	// Cannot be used together with Selection (mutually exclusive).
+	Omit []string
 
 	// Many indicates a one-to-many relationship. When true, duplicate parent rows from
 	// the join are deduplicated and child rows are aggregated into a slice per parent.

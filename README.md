@@ -42,6 +42,7 @@
   - [Shuffle (random order)](#shuffle-random-order)
   - [FOR UPDATE locking](#for-update-locking)
   - [Include deleted rows](#include-deleted-rows)
+  - [Omit columns](#omit-columns)
   - [Query logging](#query-logging)
 - [Type Casting](#type-casting)
 - [Transactions](#transactions)
@@ -662,6 +663,40 @@ IncludeDeleted: nil,               // inherit global default (default behaviour)
 
 `pgkit.Bool(v bool) *bool` is a convenience helper.
 
+### Omit columns
+
+Omit specific columns from the result instead of listing every column to include. Useful when a table has many columns and you only want to skip a few (e.g., large JSONB blobs, sensitive fields).
+
+**Primary table omit:**
+
+```go
+var user User
+err := client.One(ctx, &query.Get{
+    From:  "users",
+    Omit:  []string{"email", "status"}, // select all columns except these
+    Where: &query.Filter{Eq: map[string]any{"id": userID}},
+}, &user)
+```
+
+**Join omit:**
+
+```go
+err := client.One(ctx, &query.Get{
+    From:      "orders",
+    Omit:      []string{"id", "total"},
+    Include: []query.Join{
+        {
+            From:    "users",
+            Alias:   "customer",
+            Omit:    []string{"email", "status", "created_at"},
+            On:      map[string]string{"customer_id": "id"},
+        },
+    },
+}, &order)
+```
+
+`Selection` and `Omit` are mutually exclusive — providing both on the same `Get` or `Join` returns an error.
+
 ### Query logging
 
 Log the interpolated SQL for a specific query to the configured `Logger`:
@@ -979,7 +1014,8 @@ Fetches rows from a table with filtering, ordering, pagination, and joins.
 | Field | Type | Description |
 | --- | --- | --- |
 | `From` | `string` | **Required.** The primary table to query (e.g. `"users"`). |
-| `Selection` | `[]string` | Columns to select from the primary table. If empty/nil, selects all columns (`"table".*`). |
+| `Selection` | `[]string` | Columns to select from the primary table. If empty/nil, selects all columns (`"table".*`). Cannot be used with `Omit`. |
+| `Omit` | `[]string` | Columns to omit from the primary table. All other columns are selected. Cannot be used with `Selection`. |
 | `Where` | `*Filter` | WHERE clause filter. `nil` means no filter (all rows). |
 | `Order` | `map[string]string` | ORDER BY clauses. Keys are column names, values are `"ASC"` or `"DESC"`. Sorted alphabetically at build time. Cannot be used with `ShuffleOn`. |
 | `GroupBy` | `[]string` | GROUP BY columns from the primary table. |
@@ -1027,7 +1063,8 @@ Defines a JOIN to a related table. Used within `Get.Include` or `Aggregate.Inclu
 | `Type` | `JoinType` | Join type: `query.LeftJoin` (default), `query.InnerJoin`, `query.RightJoin`, or `query.FullJoin`. |
 | `From` | `string` | **Required.** The table to join (e.g. `"users"`). |
 | `Alias` | `string` | SQL alias for the joined table. Defaults to `From` if empty. Used as the key in nested result maps. |
-| `Selection` | `[]string` | Columns to select from the joined table. If empty/nil, all columns are auto-discovered from `information_schema` and selected with the `alias__col` naming convention. Falls back to `alias.id` only if the resolver is unavailable. |
+| `Selection` | `[]string` | Columns to select from the joined table. If empty/nil, all columns are auto-discovered from `information_schema`. Cannot be used with `Omit`. |
+| `Omit` | `[]string` | Columns to omit from the joined table. All other columns are auto-discovered and selected. Cannot be used with `Selection`. |
 | `Many` | `bool` | If `true`, treats the join as one-to-many: duplicate parent rows are deduplicated and child rows are aggregated into a slice. |
 | `On` | `map[string]string` | **Required.** Join conditions. Keys are parent table columns (or `"table.col"` for explicit qualification), values are joined table columns. At least one condition required. |
 | `Where` | `*Filter` | Join-level WHERE filter, appended to the main WHERE clause with `AND`. |
