@@ -571,7 +571,7 @@ func buildDelete(q *query.Delete, pt *ParamTracker, schema string, softDeleteCol
 		queryStr.WriteString("UPDATE ")
 		queryStr.WriteString(sqlutil.QuoteIdent(schema, q.From))
 		queryStr.WriteString(" SET ")
-		queryStr.WriteString(sqlutil.QuoteIdent(softDeleteCol) + " = " + pt.Next(time.Now()))
+		queryStr.WriteString(sqlutil.QuoteIdent(softDeleteCol));queryStr.WriteString(" = ");queryStr.WriteString(pt.Next(time.Now()))
 	} else {
 		queryStr.WriteString("DELETE FROM ")
 		queryStr.WriteString(sqlutil.QuoteIdent(schema, q.From))
