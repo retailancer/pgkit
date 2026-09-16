@@ -1,6 +1,7 @@
 package builder
 
 import (
+	"encoding/json"
 	"fmt"
 	"sort"
 	"strings"
@@ -174,6 +175,27 @@ func BuildFilter(c *query.Filter, table string, pt *ParamTracker, types map[stri
 		sort.Strings(sortedFields)
 		for _, k := range sortedFields {
 			parts = append(parts, fmt.Sprintf("%s IS NULL", sqlutil.QuoteColumn(table, k)))
+		}
+	}
+
+	if c.Contains != nil {
+		for _, k := range sqlutil.SortedKeys(c.Contains) {
+			v := c.Contains[k]
+			jsonBytes, err := json.Marshal(v)
+			if err != nil {
+				parts = append(parts, fmt.Sprintf("FALSE /* pgkit: failed to marshal contains value for %q: %v */", k, err))
+				continue
+			}
+			castStr := ""
+			if t, ok := types[k]; ok {
+				castStr = "::" + t
+			} else {
+				switch v.(type) {
+				case map[string]any, map[any]any:
+					castStr = "::jsonb"
+				}
+			}
+			parts = append(parts, fmt.Sprintf("%s @> %s%s", sqlutil.QuoteColumn(table, k), pt.Next(string(jsonBytes)), castStr))
 		}
 	}
 

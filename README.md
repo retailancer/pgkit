@@ -404,6 +404,7 @@ err := client.Update(ctx, &query.Update{
     Regexp:    map[string]string{"email": "@example\\.com$"}, // col ~* $1
     IsNull:    []string{"deleted_at"},                      // col IS NULL
     IsNotNull: []string{"verified_at"},                     // col IS NOT NULL
+    Contains:  map[string]any{"metadata": map[string]any{"status": "active"}}, // col @> $1::jsonb
 }
 ```
 
@@ -416,6 +417,11 @@ err := client.Update(ctx, &query.Update{
 - `Like` uses case-sensitive `LIKE`.
 - `ILike` uses case-insensitive `ILIKE`.
 - `Regexp` uses PostgreSQL's case-insensitive `~*` operator.
+- `Contains` uses PostgreSQL's containment operator `@>`. The value is marshaled to JSON. The type cast is dynamic:
+  - If a type is provided in `Types` (e.g. `{"tags": "text[]"}`), that cast is used.
+  - If the value is a `map[string]any`, it defaults to `::jsonb`.
+  - Otherwise, no cast is applied.
+  - Supports JSONB containment, ARRAY containment, and other types.
 
 ### Logical operators (Op)
 
@@ -484,13 +490,13 @@ err := client.One(ctx, &query.Get{
 }, &order)
 ```
 
-The `On` map keys are columns on the **parent** table (or `"parentTable.col"` for explicit qualification), and values are columns on the **joined** table's alias. Joined columns are returned as `alias__column` and automatically nested into `{"customer": {"name": "...", "email": "..."}}` by the row scanner.
+The `On` map keys are columns on the **parent** table (or `"parentTable.col"` for explicit qualification), and values are columns on the **joined** table's alias. Joined columns are automatically nested into `{"customer": {"name": "...", "email": "..."}}` by the row scanner.
 
 At least one `On` condition is required or the build will error.
 
 ### Auto-select all joined columns
 
-When `Selection` is omitted from a `Join`, pgkit automatically queries `information_schema.columns` to discover all columns on the joined table and selects them with the `alias__column` naming convention. This is cached per table for the lifetime of the `DB` instance.
+When `Selection` is omitted from a `Join`, pgkit automatically queries `information_schema.columns` to discover all columns on the joined table. This is cached per table for the lifetime of the `DB` instance.
 
 ```go
 var order OrderWithCustomer
@@ -584,7 +590,7 @@ result, err := client.Exec(ctx, &query.Aggregate{
     Max:     []string{"price"},             // → COALESCE(MAX(price), 0)::float AS price__max
     Min:     []string{"price"},             // → COALESCE(MIN(price), 0)::float AS price__min
     Sum:     []string{"total"},             // → COALESCE(SUM(total), 0)::float AS total__sum
-    Count:   []string{"id"},               // → COALESCE(COUNT(id), 0)::float AS id__count
+    Count:   []string{"id"},                // → COALESCE(COUNT(id), 0)::float AS id__count
     GroupBy: []string{"category"},
     Order:   map[string]string{"category": "ASC"},
     Where:   &query.Filter{Eq: map[string]any{"status": "completed"}},
@@ -1302,6 +1308,7 @@ Builds WHERE clause conditions. All map keys are sorted alphabetically for deter
 | `Regexp` | `map[string]string` | `col ~* $1` (PostgreSQL case-insensitive regex). |
 | `IsNull` | `[]string` | `col IS NULL` for each column. |
 | `IsNotNull` | `[]string` | `col IS NOT NULL` for each column. |
+| `Contains` | `map[string]any` | `col @> $1` (PostgreSQL containment operator). Value is marshaled to JSON. Cast is dynamic: defaults to `::jsonb` for map values; use `Types` to override (e.g. `"tags": "text[]"` for arrays). |
 | `Op` | `FilterOp` | Logical operator joining conditions: `query.And` (default) or `query.Or`. |
 | `Groups` | `[]FilterGroup` | Nested filter groups for arbitrarily nested AND/OR logic. Each group is wrapped in parentheses. |
 | `Types` | `map[string]string` | Type cast overrides for filter parameters (e.g. `{"status": "text"}`). |

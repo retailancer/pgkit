@@ -69,6 +69,20 @@ type Filter struct {
 	// IsNull generates "col IS NULL" for each column name in the slice.
 	IsNull []string
 
+	// Contains generates "col @> $1" for each entry, using PostgreSQL's
+	// containment operator. The value is marshaled to JSON.
+	//
+	// The type cast is determined as follows:
+	//   - If a type is provided in the query's Types map (e.g. "tags": "text[]"),
+	//     that type is used (e.g. $1::text[]).
+	//   - If the value is a map[string]any or map[any]any, defaults to ::jsonb.
+	//   - Otherwise, no cast is applied.
+	//
+	// Supported use cases:
+	//   - JSONB containment: Contains: map[string]any{"metadata": map[string]any{"status": "active"}}
+	//   - ARRAY containment: Contains: map[string]any{"tags": []string{"go", "postgres"}}, Types: {"tags": "text[]"}
+	Contains map[string]any
+
 	// Op controls how conditions within this Filter are joined.
 	// And (default): all conditions are joined with AND.
 	// Or: all conditions are joined with OR.

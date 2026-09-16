@@ -110,3 +110,87 @@ func TestBuildFilterLikeAndILike(t *testing.T) {
 		t.Errorf("unexpected filter output:\ngot:  %s\nwant: %s", sqlStr, expected)
 	}
 }
+
+func TestBuildFilterContains(t *testing.T) {
+	c := &query.Filter{
+		Contains: map[string]any{
+			"metadata": map[string]any{"status": "active"},
+		},
+	}
+
+	pt := &ParamTracker{}
+	sqlStr := BuildFilter(c, "users", pt, nil)
+
+	expected := `"users"."metadata" @> $1::jsonb`
+	if sqlStr != expected {
+		t.Errorf("unexpected filter output:\ngot:  %s\nwant: %s", sqlStr, expected)
+	}
+
+	if len(pt.Params) != 1 {
+		t.Fatalf("expected 1 param, got %d", len(pt.Params))
+	}
+
+	// The param should be the JSON-encoded string
+	paramStr, ok := pt.Params[0].(string)
+	if !ok {
+		t.Fatalf("expected string param, got %T", pt.Params[0])
+	}
+	if paramStr != `{"status":"active"}` {
+		t.Errorf("unexpected param value: got %q, want %q", paramStr, `{"status":"active"}`)
+	}
+}
+
+func TestBuildFilterContainsWithArray(t *testing.T) {
+	c := &query.Filter{
+		Contains: map[string]any{
+			"tags": []string{"go", "postgres"},
+		},
+	}
+	types := map[string]string{"tags": "text[]"}
+
+	pt := &ParamTracker{}
+	sqlStr := BuildFilter(c, "posts", pt, types)
+
+	expected := `"posts"."tags" @> $1::text[]`
+	if sqlStr != expected {
+		t.Errorf("unexpected filter output:\ngot:  %s\nwant: %s", sqlStr, expected)
+	}
+
+	paramStr := pt.Params[0].(string)
+	if paramStr != `["go","postgres"]` {
+		t.Errorf("unexpected param value: got %q, want %q", paramStr, `["go","postgres"]`)
+	}
+}
+
+func TestBuildFilterContainsArrayNoCast(t *testing.T) {
+	c := &query.Filter{
+		Contains: map[string]any{
+			"tags": []string{"go", "postgres"},
+		},
+	}
+
+	pt := &ParamTracker{}
+	sqlStr := BuildFilter(c, "posts", pt, nil)
+
+	// Without Types, array values get no cast (only maps default to jsonb)
+	expected := `"posts"."tags" @> $1`
+	if sqlStr != expected {
+		t.Errorf("unexpected filter output:\ngot:  %s\nwant: %s", sqlStr, expected)
+	}
+}
+
+func TestBuildFilterContainsWithOtherOps(t *testing.T) {
+	c := &query.Filter{
+		Op:       query.And,
+		Eq:       map[string]any{"role": "admin"},
+		Contains: map[string]any{"metadata": map[string]any{"verified": true}},
+	}
+
+	pt := &ParamTracker{}
+	sqlStr := BuildFilter(c, "users", pt, nil)
+
+	expected := `"users"."role" = $1 AND "users"."metadata" @> $2::jsonb`
+	if sqlStr != expected {
+		t.Errorf("unexpected filter output:\ngot:  %s\nwant: %s", sqlStr, expected)
+	}
+}
